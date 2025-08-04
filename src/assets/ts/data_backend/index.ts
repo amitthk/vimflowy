@@ -1,5 +1,6 @@
-import * as firebase from 'firebase';
-import UserCredential = firebase.auth.UserCredential;
+import firebase from 'firebase';
+import localForage from 'localforage';
+// import "firebase/auth";
 
 import EventEmitter from '../utils/eventEmitter';
 import DataBackend, { SynchronousDataBackend } from '../../../shared/data_backend';
@@ -21,9 +22,9 @@ export class MultipleUsersError extends ExtendableError {
 const internalPrefix: string = 'internal:';
 
 export class SynchronousLocalStorageBackend extends SynchronousDataBackend {
-  constructor() {
-    super();
-  }
+  // constructor() {
+  //   super();
+  // }
 
   public get(key: string): string | null {
     const val = localStorage.getItem(key);
@@ -74,6 +75,41 @@ export class LocalStorageBackend extends DataBackend {
   }
 }
 
+export class IndexedDBBackend extends DataBackend {
+  private lastSave: number;
+  private docname: string;
+
+  private _lastSaveKey_(): string {
+    return `${internalPrefix}${this.docname}:lastSave`;
+  }
+
+  constructor(docname = '') {
+    super();
+    this.docname = docname;
+    this.lastSave = Date.now();
+  }
+
+  public async get(key: string): Promise<string | null> {
+    return localForage.getItem(key);
+  }
+
+  public async set(key: string, value: string): Promise<void> {
+    if (await this.getLastSave() > this.lastSave) {
+      throw new MultipleUsersError();
+    }
+    this.lastSave = Date.now();
+    await localForage.setItem(this._lastSaveKey_(), this.lastSave + '');
+    await localForage.setItem(key, value);
+    return Promise.resolve();
+  }
+
+  // determine last time saved (for multiple tab detection)
+  // note that this doesn't cache!
+  public async getLastSave(): Promise<number> {
+    return JSON.parse(await localForage.getItem(this._lastSaveKey_()) || '0');
+  }
+}
+
 export class FirebaseBackend extends DataBackend {
   public events: EventEmitter = new EventEmitter();
 
@@ -112,7 +148,7 @@ export class FirebaseBackend extends DataBackend {
     });
   }
 
-  public async auth(email: string, password: string): Promise<UserCredential | undefined> {
+  public async auth(email: string, password: string) { // : Promise<UserCredential | undefined>
     try {
         let credential = await firebase.auth().signInWithEmailAndPassword(email, password);
         logger.info('Authenticated against Firebase.');
@@ -179,16 +215,19 @@ export class ClientSocketBackend extends DataBackend {
     this.clientId = Date.now() + '-' + ('' + Math.random()).slice(2);
   }
 
-  public async init(host: string, password: string, docname = '') {
-    this.events.emit('saved');
-
+  private async connect(host: string, password: string, docname: string) {
     logger.info('Trying to connect', host);
     this.ws = new WebSocket(`${host}/socket`);
-    this.ws.onerror = (err) => {
-      throw new Error(`Socket connection error: ${err}`);
+    this.ws.onerror = () => {
+      // throw new Error(`Socket connection error: ${err}`);
+      logger.info('Socket connection error!');
     };
     this.ws.onclose = () => {
-      throw new Error('Socket connection closed!');
+      // throw new Error('Socket connection closed!');
+      logger.info('Socket connection closed! Trying to reconnect...');
+      setTimeout(() => {
+        this.connect(host, password, docname);
+      }, 5000);
     };
 
     await new Promise((resolve, reject) => {
@@ -224,6 +263,11 @@ export class ClientSocketBackend extends DataBackend {
       password: password,
       docname: docname,
     });
+  }
+
+  public async init(host: string, password: string, docname = '') {
+    this.events.emit('saved');
+    await this.connect(host, password, docname);
   }
 
   private async sendMessage(message: Object): Promise<string | null> {

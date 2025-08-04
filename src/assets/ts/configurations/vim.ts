@@ -127,7 +127,7 @@ export const VISUAL_MODE_MAPPINGS: HotkeyMapping = Object.assign({
   'exit-mode': [['esc'], ['ctrl+c'], ['ctrl+[']],
   'swap-visual-cursor': [['o'], ['O']],
   'visual-delete': [['d'], ['x']],
-  'visual-change': [['c']],
+  'visual-change': [['c'], ['s']],
   'visual-yank': [['y']],
   'visual-swap-case': [['~']],
 }, _.pick(NORMAL_MOTION_MAPPINGS, SINGLE_LINE_MOTIONS));
@@ -138,7 +138,8 @@ export const VISUAL_LINE_MODE_MAPPINGS: HotkeyMapping = Object.assign({
   'exit-mode': [['esc'], ['ctrl+c'], ['ctrl+[']],
   'swap-visual-cursor': [['o'], ['O']],
   'visual-line-delete': [['d'], ['x']],
-  'visual-line-change': [['c']],
+  'visual-line-change': [['c'], ['s']],
+  'visual-line-join': [['J']],
   'visual-line-yank': [['y']],
   'visual-line-yank-clone': [['Y']],
   'visual-line-indent': [['>'], ['tab'], ['ctrl+l']],
@@ -260,9 +261,17 @@ function getDefaultData(): Array<SerializedBlock> {
       { text: 'Marks', plugins: { mark: 'mark' }, collapsed: true, children: [
         { text: 'I am marked!', plugins: { mark: 'im_a_mark' } },
         'Press m to start marking a line, and enter to finish',
+        'Use M to quickly mark a line with its contents',
         'Use \' to search and jump to marks',
-        'Link to marks with the @ symbol, like this:  @im_a_mark.  Use gm to follow the link.',
+        'Link to marks with the @ symbol or double square brackets, like this:  @im_a_mark or [[im_a_mark]]. Use gm to follow the link.',
         'Delete marks by using dm, or just mark with empty string',
+      ] },
+      { text: 'Tags', plugins: { tags: ['tag'] }, collapsed: true, children: [
+        { text: 'I am tagged!', plugins: { tags: ['tag', 'another_tag'] } },
+        'Each row can have multiple tags, and rows can share the same tags',
+        'Press # to start adding a tag to a line, and enter to finish',
+        'Use - to search and jump to tags',
+        'Delete the i\'th tag by using d#i',
       ] },
       { text: 'Cloning', collapsed: true, children: [
         { text: 'I am a clone!  Try editing me', id: 1 },
@@ -330,12 +339,12 @@ const config: Config = {
   // TODO: get the keys from modes.ts
   defaultMappings:
     new KeyMappings({
-      [ 'NORMAL' ]: NORMAL_MODE_MAPPINGS,
-      [ 'INSERT' ]: INSERT_MODE_MAPPINGS,
-      [ 'VISUAL' ]: VISUAL_MODE_MAPPINGS,
-      [ 'VISUAL_LINE' ]: VISUAL_LINE_MODE_MAPPINGS,
-      [ 'SEARCH' ]: SEARCH_MODE_MAPPINGS,
-      [ 'SETTINGS' ]: SETTINGS_MODE_MAPPINGS,
+       NORMAL : NORMAL_MODE_MAPPINGS,
+       INSERT : INSERT_MODE_MAPPINGS,
+       VISUAL : VISUAL_MODE_MAPPINGS,
+       VISUAL_LINE : VISUAL_LINE_MODE_MAPPINGS,
+       SEARCH : SEARCH_MODE_MAPPINGS,
+       SETTINGS : SETTINGS_MODE_MAPPINGS,
     }),
 };
 export default config;

@@ -12,7 +12,7 @@ import Session, { InMemorySession } from '../../assets/ts/session';
 import LineComponent from '../../assets/ts/components/line';
 import Mutation from '../../assets/ts/mutations';
 import Path from '../../assets/ts/path';
-import { Row } from '../../assets/ts/types';
+import { Col, Row } from '../../assets/ts/types';
 import { getStyles } from '../../assets/ts/themes';
 
 import { SINGLE_LINE_MOTIONS } from '../../assets/ts/definitions/motions';
@@ -95,7 +95,7 @@ export class MarksPlugin {
 
     class UnsetMark extends Mutation {
       private row: Row;
-      private mark: Mark | null = null;
+      private mark: Mark | null | undefined = undefined;
 
       constructor(row: Row) {
         super();
@@ -105,13 +105,18 @@ export class MarksPlugin {
         return `row ${this.row}`;
       }
       public async mutate(/* session */) {
-        this.mark = await that._getMark(this.row);
-        await that._unsetMark(this.row, this.mark);
-        await that.api.updatedDataForRender(this.row);
+        this.mark = await that.getMark(this.row);
+        if (this.mark !== null) {
+          await that._unsetMark(this.row, this.mark);
+          await that.api.updatedDataForRender(this.row);
+        }
       }
       public async rewind(/* session */) {
-        if (this.mark === null) {
+        if (this.mark === undefined) {
           throw new Error('Rewinding before mutating: UnsetMark');
+        }
+        if (this.mark === null) {
+          return [];
         }
         return [
           new SetMark(this.row, this.mark),
@@ -123,7 +128,7 @@ export class MarksPlugin {
     // Serialization #
 
     this.api.registerHook('document', 'serializeRow', async (struct, info) => {
-      const mark = await this._getMark(info.row);
+      const mark = await this.getMark(info.row);
       if (mark) {
         struct.mark = mark;
       }
@@ -131,8 +136,8 @@ export class MarksPlugin {
     });
 
     this.api.registerListener('document', 'loadRow', async (path, serialized) => {
-      if (serialized.mark) {
-        const err = await this.updateMark(path.row, serialized.mark);
+      if (serialized.mark != null) {
+        const err = await this.setMark(path.row, serialized.mark);
         if (err) { return this.session.showMessage(err, {text_class: 'error'}); }
       }
     });
@@ -170,16 +175,14 @@ export class MarksPlugin {
       },
       key_transforms: [
         async (key, context) => {
-          // must be non-whitespace
+          if (key === 'space') { key = ' '};
           if (key.length === 1) {
-            if (/^\S*$/.test(key)) {
-              if (this.markstate === null) {
-                throw new Error('Mark state null during key transform');
-              }
-              await this.markstate.session.addCharsAtCursor([key]);
-              await this.api.updatedDataForRender(this.markstate.path.row);
-              return [null, context];
+            if (this.markstate === null) {
+              throw new Error('Mark state null during key transform');
             }
+            await this.markstate.session.addCharsAtCursor([key]);
+            await this.api.updatedDataForRender(this.markstate.path.row);
+            return [null, context];
           }
           return [key, context];
         },
@@ -203,7 +206,7 @@ export class MarksPlugin {
         }
         const mark = await that.markstate.session.curText();
         const markedRow = that.markstate.path.row;
-        const err = await that.updateMark(markedRow, mark);
+        const err = await that.setMark(markedRow, mark);
         if (err) { session.showMessage(err, {text_class: 'error'}); }
         await session.setMode('NORMAL');
         keyStream.save();
@@ -215,12 +218,18 @@ export class MarksPlugin {
       'Go to the mark indicated by the cursor, if it exists',
       async function({ session }) {
         return async cursor => {
-          const word = await session.document.getWord(cursor.row, cursor.col);
-          if (word.length < 1 || word[0] !== '@') {
-            session.showMessage(`Cursor should be over a @mark link`);
+          const line = await session.document.getText(cursor.row);
+          const matches = that.getMarkMatches(line);
+          let mark = '';
+          matches.map((pos) => {
+            if (cursor.col >= pos[0] && cursor.col <= pos[1]) {
+              mark = that.parseMarkMatch(line.slice(pos[0], pos[1]));
+            }
+          });
+          if (!mark) {
+            session.showMessage(`Cursor should be over a mark link`);
             return;
           }
-          const mark = word.slice(1);
           const allMarks = await that.listMarks();
           if (mark in allMarks) {
             const path = allMarks[mark];
@@ -233,10 +242,20 @@ export class MarksPlugin {
     );
 
     this.api.registerAction(
+      'set-mark-row-contents',
+      'Set a mark with the current row text',
+      async function({ session, keyStream }) {
+        const err = await that.setMark(session.cursor.row, await session.document.getText(session.cursor.row));
+        if (err) { session.showMessage(err, {text_class: 'error'}); }
+        keyStream.save();
+      },
+    );
+
+    this.api.registerAction(
       'delete-mark',
       'Delete mark at cursor',
       async function({ session, keyStream }) {
-        const err = await that.updateMark(session.cursor.row, '');
+        const err = await that.setMark(session.cursor.row, '');
         if (err) { session.showMessage(err, {text_class: 'error'}); }
         keyStream.save();
       },
@@ -349,6 +368,7 @@ export class MarksPlugin {
       'NORMAL',
       {
         'begin-mark': [['m']],
+        'set-mark-row-contents': [['M']],
         'go-mark': [['g', 'm']],
         'delete-mark': [['d', 'm']],
         'search-marks': [['\''], ['`']],
@@ -356,7 +376,7 @@ export class MarksPlugin {
     );
 
     this.api.registerHook('document', 'pluginRowContents', async (obj, { row }) => {
-      const mark = await this._getMark(row);
+      const mark = await this.getMark(row);
       const marking = this.markstate && (this.markstate.path.row === row);
       obj.marks = { mark, marking };
       if (this.markstate && marking) {
@@ -418,16 +438,20 @@ export class MarksPlugin {
       return lineContents;
     });
 
-    this.api.registerHook('session', 'renderWordTokenHook', (tokenizer) => {
+
+    this.api.registerHook('session', 'renderLineTokenHook', (tokenizer) => {
       return tokenizer.then(new PartialUnfolder<Token, React.ReactNode>((
         token: Token, emit: EmitFn<React.ReactNode>, wrapped: Tokenizer
       ) => {
         if (this.session.mode === 'NORMAL') {
-          if (token.text[0] === '@') {
-            const mark = token.text.slice(1).replace(/(\.|!|\?)+$/g, '');
+          const matches = this.getMarkMatches(token.text);
+          matches.map(pos => {
+            let start = pos[0];
+            let end = pos[1];
+            const mark = this.parseMarkMatch(token.text.slice(start, end));
             const path = this.marks_to_paths[mark];
             if (path) {
-              token.info.forEach((char_info) => {
+              token.info.slice(start, end).forEach((char_info) => {
                 char_info.renderOptions.divType = 'a';
                 char_info.renderOptions.style = char_info.renderOptions.style || {};
                 Object.assign(char_info.renderOptions.style, getStyles(this.session.clientStore, ['theme-link']));
@@ -437,12 +461,11 @@ export class MarksPlugin {
                 };
               });
             }
-          }
+          });
         }
         emit(...wrapped.unfold(token));
-      }));
+        }));
     });
-
     this.api.registerListener('document', 'afterDetach', async () => {
       this.computeMarksToPaths(); // FIRE AND FORGET
     });
@@ -485,9 +508,9 @@ export class MarksPlugin {
   }
 
   // get mark for an row, '' if it doesn't exist
-  private async _getMark(row: Row) {
+  public async getMark(row: Row): Promise<Mark | null> {
     const marks = await this._getRowsToMarks();
-    return marks[row] || '';
+    return marks[row] || null;
   }
 
   private async _setMark(row: Row, mark: Mark) {
@@ -547,7 +570,7 @@ export class MarksPlugin {
 
   // Set the mark for row
   // Returns whether setting mark succeeded
-  private async updateMark(row: Row, mark: Mark = '') {
+  public async setMark(row: Row, mark: Mark | null = null) {
     const marks_to_rows = await this._getMarksToRows();
     const rows_to_marks = await this._getRowsToMarks();
     const oldmark = rows_to_marks[row];
@@ -556,7 +579,7 @@ export class MarksPlugin {
       return 'No mark to delete!';
     }
 
-    if (mark in marks_to_rows) {
+    if (mark && (mark in marks_to_rows)) {
       if (marks_to_rows[mark] === row) {
         return 'Already marked, nothing to do!';
       }
@@ -578,6 +601,37 @@ export class MarksPlugin {
     }
 
     return null;
+  }
+
+  public getMarkMatches(line: string) {
+    const matches = [];
+    let index = 0;
+    const regex = /(@\S*|\[\[([^\]]*)\]\])/;
+    while (true) {
+      let match = regex.exec(line.slice(index));
+      if (!match) { break; }
+      let start = index + match.index;
+      let end = start + match[0].length;
+      index = end;
+      matches.push([start, end]);
+
+    }
+    return matches;
+  }
+
+  public parseMarkMatch(match: string) {
+    const end = match.length;
+    let markStart = 0, markEnd = end;
+    if (match[0] === '@') {
+      markStart = 1;
+      markEnd = end;
+    }
+    if (match[0] === '[') {
+      markStart = 2;
+      markEnd = end - 2;
+    }
+    const mark = match.slice(markStart, markEnd).replace(/(\.|!|\?)+$/g, '');
+    return mark;
   }
 }
 

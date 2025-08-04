@@ -15,15 +15,15 @@ type RowProps = {
   session: Session;
   path: Path;
   cached: CachedRowInfo;
-  onCharClick: ((path: Path, column: Col, e: Event) => void) | null;
-  onClick: ((path: Path) => void) | null;
+  onCharClick: ((path: Path, column: Col, e: Event) => void) | undefined;
+  onClick: ((path: Path) => void) | undefined;
   style: React.CSSProperties;
   cursorsTree: CursorsInfoTree;
   cursorBetween: boolean;
 };
 class RowComponent extends React.Component<RowProps, {}> {
   private onClick: (() => void) | undefined = undefined;
-  private onCharClick: ((column: Col, e: Event) => void) | null = null;
+  private onCharClick: ((column: Col, e: Event) => void) | undefined = undefined;
 
   constructor(props: RowProps) {
     super(props);
@@ -134,17 +134,16 @@ type BlockProps = {
   cached: CachedRowInfo | null;
   cursorsTree: CursorsInfoTree;
   cursorBetween: boolean;
-  onCharClick: ((path: Path, column: Col, e: Event) => void) | null;
-  onLineClick: ((path: Path) => void) | null;
+  onCharClick: ((path: Path, column: Col, e: Event) => void) | undefined;
+  onLineClick: ((path: Path) => void) | undefined;
   onBulletClick: ((path: Path) => void) | undefined;
   topLevel: boolean;
   fetchData: () => void;
 };
 export default class BlockComponent extends React.Component<BlockProps, {}> {
-
-  constructor(props: BlockProps) {
-    super(props);
-  }
+  // constructor(props: BlockProps) {
+  //   super(props);
+  // }
 
   public shouldComponentUpdate(nextProps: BlockProps) {
     if (this.props.cursorsTree.hasSelection) {

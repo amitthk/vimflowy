@@ -19,20 +19,20 @@ export type LineProps = {
   linksStyle: React.CSSProperties;
   lineHook?: PartialUnfolder<Token, React.ReactNode>;
   wordHook?: PartialUnfolder<Token, React.ReactNode>;
-  onCharClick?: ((col: Col, e: Event) => void) | null;
+  onCharClick?: ((col: Col, e: Event) => void) | undefined;
   cursorBetween?: boolean;
 };
 
 // NOTE: hacky! we don't include .:/?= since urls contain it
 // should instead make tokenizer for URLs
 // also not including @ for marks
-const word_boundary_chars = '\t\r\n ,!()\"\'*+\\;<>\\[\\]`{}|';
+const word_boundary_chars = '\t\r\n ,!()"\'*+\\;<>\\[\\]`{}|';
 
 export default class LineComponent extends React.Component<LineProps, {}> {
 
-  constructor(props: LineProps) {
-    super(props);
-  }
+  // constructor(props: LineProps) {
+  //   super(props);
+  // }
 
   public render() {
     const cursorBetween: boolean = this.props.cursorBetween || false;
@@ -92,11 +92,13 @@ export default class LineComponent extends React.Component<LineProps, {}> {
 
         const column = token.index + i;
         let href = null;
+        let target = null;
         if (char_info.renderOptions.href) {
           href = char_info.renderOptions.href;
+          target = '_blank';
         }
 
-        let onClick = null;
+        let onClick = undefined;
         if (href == null) {
           if (char_info.renderOptions.onClick !== undefined) {
             onClick = char_info.renderOptions.onClick;
@@ -114,6 +116,7 @@ export default class LineComponent extends React.Component<LineProps, {}> {
               className: classes.join(' '),
               onClick: onClick,
               href: href,
+              target: target
             } as React.DOMAttributes<any>,
             token.text[i] as React.ReactNode
           )

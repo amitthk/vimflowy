@@ -1,5 +1,5 @@
 import * as _ from 'lodash';
-import 'core-js/shim';
+// import 'core-js/shim';
 
 import * as errors from '../../shared/utils/errors';
 import EventEmitter from './utils/eventEmitter';
@@ -340,8 +340,8 @@ export default class Document extends EventEmitter {
     }
     let word = text.slice(start, end + 1).join('');
     // remove leading and trailing punctuation
-    word = word.replace(/^[-.,()&$#!\[\]{}"']+/g, '');
-    word = word.replace(/[-.,()&$#!\[\]{}"']+$/g, '');
+    word = word.replace(/^[-.,()&$#![\]{}"']+/g, '');
+    word = word.replace(/[-.,()&$#![\]{}"']+$/g, '');
     return word;
   }
 
