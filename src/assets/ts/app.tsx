@@ -170,7 +170,7 @@ $(document).ready(async () => {
         await socket_backend.init(
           socketServerHost, socketServerPassword || '', socketServerDocument || '');
         break;
-      } catch (e) {
+      } catch (e:any) {
         if (e === 'Wrong password!') {
           socketServerPassword = prompt(
             socketServerPassword ?
@@ -190,7 +190,7 @@ $(document).ready(async () => {
   if (backend_type === 'firebase') {
     try {
       docStore = await getFirebaseStore();
-    } catch (e) {
+    } catch (e:any) {
       alert(`
         Error loading firebase datastore:
 
@@ -209,7 +209,7 @@ $(document).ready(async () => {
   } else if (backend_type === 'socketserver') {
     try {
       docStore = await getSocketServerStore();
-    } catch (e) {
+    } catch (e:any) {
       alert(`
         Error loading socket server datastore:
 
@@ -265,7 +265,7 @@ $(document).ready(async () => {
       if (await doc.isAttached(row)) {
         viewRoot = await doc.canonicalPath(row);
       }
-    } catch (e) {
+    } catch (e:any) {
       logger.error(`Invalid hash: ${window.location.hash}`);
     }
   }

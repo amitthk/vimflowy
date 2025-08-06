@@ -1,0 +1,71 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "CloudFormationFullAccess",
+        "Effect": "Allow",
+        "Action": [
+          "cloudformation:CreateStack",
+          "cloudformation:UpdateStack",
+          "cloudformation:DeleteStack",
+          "cloudformation:DescribeStacks",
+          "cloudformation:DescribeStackEvents",
+          "cloudformation:DescribeStackResources",
+          "cloudformation:GetTemplate",
+          "cloudformation:ListStackResources",
+          "cloudformation:ValidateTemplate"
+        ],
+        "Resource": [
+          "arn:aws:cloudformation:*:*:stack/vimflowy-*",
+          "arn:aws:cloudformation:*:*:stack/aikmsagent-agent-*"
+        ]
+      },
+      {
+        "Sid": "S3DeploymentBuckets",
+        "Effect": "Allow",
+        "Action": [
+          "s3:CreateBucket",
+          "s3:DeleteBucket",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketPolicy",
+          "s3:PutBucketPolicy",
+          "s3:DeleteBucketPolicy",
+          "s3:PutBucketAcl",
+          "s3:GetBucketAcl",
+          "s3:PutBucketCors",
+          "s3:GetBucketCors",
+          "s3:PutBucketWebsite",
+          "s3:GetBucketWebsite",
+          "s3:DeleteBucketWebsite",
+          "s3:PutBucketVersioning",
+          "s3:GetBucketVersioning",
+          "s3:PutBucketNotification",
+          "s3:GetBucketNotification"
+        ],
+        "Resource": [
+          "arn:aws:s3:::*serverless*",
+          "arn:aws:s3:::vimflowy-*",
+          "arn:aws:s3:::aikmsagent-agent-*",
+          "arn:aws:s3:::aikmsagent-data*"
+        ]
+      },
+      {
+        "Sid": "S3ObjectAccess",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:PutObjectAcl",
+          "s3:GetObjectAcl"
+        ],
+        "Resource": [
+          "arn:aws:s3:::*serverless*/*",
+          "arn:aws:s3:::vimflowy-*/*",
+          "arn:aws:s3:::aikmsagent-agent-*/*",
+          "arn:aws:s3:::aikmsagent-data*/*"
+        ]
+      }
+    ]
+  }

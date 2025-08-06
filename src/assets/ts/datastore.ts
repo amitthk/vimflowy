@@ -84,7 +84,7 @@ export class ClientStore {
     let value: any = this.backend.get(key);
     try {
       value = JSON.parse(value);
-    } catch (e) { /* do nothing - this shouldn't happen */ }
+    } catch (e:any) { /* do nothing - this shouldn't happen */ }
     if (value === null) {
       value = default_value;
       logger.debug('tried getting', key, 'defaulted to', default_value);
@@ -239,7 +239,7 @@ export class DocumentStore {
       if (typeof value === 'string') {
         value = JSON.parse(value);
       }
-    } catch (e) { /* do nothing - this should only happen for historical reasons */ }
+    } catch (e:any) { /* do nothing - this should only happen for historical reasons */ }
     let decodedValue: T;
     if (value === null) {
       decodedValue = default_value;

@@ -380,7 +380,7 @@ class DailyNotesPlugin {
 
   private async getDailyNotesRoot() {
     this.log('getDailyNotesRoot');
-    if (this.dailyNotesRoot && this.api.session.document.isValidPath(this.dailyNotesRoot!)) {
+    if (this.dailyNotesRoot && await this.api.session.document.isValidPath(this.dailyNotesRoot!)) {
       this.log('getDailyNotesRoot from cache');
       return this.dailyNotesRoot!;
     } else {

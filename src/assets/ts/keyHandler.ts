@@ -121,7 +121,7 @@ export default class KeyHandler extends EventEmitter {
     recordKeyStream.stop();
     try {
       await this._processKeys(recordKeyStream);
-    } catch (e) {
+    } catch (e:any) {
       // console.log('caught', e, e.name);
       if (e.name === 'QueueStoppedError') {
         // console.log('failed to fully play', recording);

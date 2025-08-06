@@ -47,7 +47,7 @@ registerPlugin(
               key={`html-${token.index}`}
               dangerouslySetInnerHTML={{__html: token.text}}
             />);
-          } catch (e) {
+          } catch (e:any) {
             api.session.showMessage(e.message, { text_class: 'error' });
             emit(...wrapped.unfold(token));
           }

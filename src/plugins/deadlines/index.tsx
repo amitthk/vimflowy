@@ -201,7 +201,7 @@ class DeadlinesPlugin {
 
   private async getDeadlinesRoot() {
     this.log('getDeadlinesRoot');
-    if (this.deadlinesRoot && this.api.session.document.isValidPath(this.deadlinesRoot!)) {
+    if (this.deadlinesRoot && await this.api.session.document.isValidPath(this.deadlinesRoot!)) {
       this.log('getDeadlinesRoot from cache');
       return this.deadlinesRoot!;
     } else {

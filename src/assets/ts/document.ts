@@ -257,15 +257,17 @@ export default class Document extends EventEmitter {
 
     const [
       line, collapsed, children, parents, pluginData
-    ] = await Promise.all<Line, boolean, Array<Row>, Array<Row>, any>([
-      this.store.getLine(row),
-      this.store.getCollapsed(row),
-      this.store.getChildren(row),
-      this.store.getParents(row),
-      this.applyHookAsync('pluginRowContents', {}, { row }),
+    ] = await Promise.all([
+      this.store.getLine(row), // Ensure this resolves to a Line
+      this.store.getCollapsed(row), // Ensure this resolves to a boolean
+      this.store.getChildren(row), // Ensure this resolves to an Array<Row>
+      this.store.getParents(row), // Ensure this resolves to an Array<Row>
+      this.applyHookAsync('pluginRowContents', {}, { row }), // Ensure this resolves to any
     ]);
+
     const info: RowInfo = {
-      line, collapsed,
+      line, 
+      collapsed, // Ensure this is a boolean
       parentRows: parents,
       childRows: children,
       pluginData,

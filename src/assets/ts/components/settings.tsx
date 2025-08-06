@@ -387,7 +387,7 @@ export default class SettingsComponent extends React.Component<Props, State> {
                           let theme;
                           try {
                             theme = JSON.parse(contents);
-                          } catch (e) {
+                          } catch (e:any) {
                             session.showMessage(`Failed to parse JSON: ${e}`, {text_class: 'error'});
                             return;
                           }
@@ -505,7 +505,7 @@ export default class SettingsComponent extends React.Component<Props, State> {
                     let hotkey_settings;
                     try {
                       hotkey_settings = JSON.parse(contents);
-                    } catch (e) {
+                    } catch (e:any) {
                       session.showMessage(`Failed to parse JSON: ${e}`, {text_class: 'error'});
                       return;
                     }

@@ -1,0 +1,38 @@
+service: vimflowy-frontend
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ap-southeast-1
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+
+functions:
+  app:
+    handler: lambda.handler
+    events:
+      - httpApi:
+          path: /{proxy+}
+          method: '*'
+      - httpApi:
+          path: /
+          method: '*'
+
+# Remove serverless-http from plugins - it's a dependency, not a plugin
+plugins:
+  - serverless-offline
+
+# Remove the custom serverless-http section as it's not needed
+package:
+  exclude:
+    - node_modules/**
+    - .git/**
+    - .gitignore
+    - README.md
+    - .env
+  include:
+    - dist/**
+    - lambda.js
+    - node_modules/serverless-http/**
+    - node_modules/express/**

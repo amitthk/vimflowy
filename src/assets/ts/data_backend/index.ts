@@ -153,7 +153,7 @@ export class FirebaseBackend extends DataBackend {
         let credential = await firebase.auth().signInWithEmailAndPassword(email, password);
         logger.info('Authenticated against Firebase.');
         return credential;
-    } catch (x) {
+    } catch (x:any) {
         logger.error('Authentication against Firebase failed: ' + x.code + ': ' + x.message);
         return;
     }
