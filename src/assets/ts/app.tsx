@@ -31,7 +31,7 @@ import { ClientStore, DocumentStore } from './datastore';
 import { SynchronousInMemory, InMemory } from '../../shared/data_backend';
 import {
   BackendType, SynchronousLocalStorageBackend,
-  LocalStorageBackend, FirebaseBackend, ClientSocketBackend, IndexedDBBackend
+  FirebaseBackend, ClientSocketBackend, IndexedDBBackend
 } from './data_backend';
 import Document from './document';
 import { PluginsManager } from './plugins';
@@ -144,46 +144,59 @@ $(document).ready(async () => {
     return dStore;
   }
 
+  async function getUserInfo(): Promise<{id: string, email: string, name: string} | null> {
+    try {
+      const response = await fetch('/auth/user', {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+      return null;
+    } catch (e) {
+      logger.error('Failed to get user info:', e);
+      return null;
+    }
+  }
+
   async function getSocketServerStore(): Promise<DocumentStore> {
     let socketServerHost;
-    let socketServerDocument;
-    let socketServerPassword;
+    let userId;
+    
     if (SERVER_CONFIG.socketserver) { // server is fixed!
       socketServerHost = window.location.origin.replace(/^http/, 'ws');
-      socketServerDocument = docname;
-      socketServerPassword = clientStore.getDocSetting('socketServerPassword');
+      
+      // Get user info from authentication
+      const userInfo = await getUserInfo();
+      if (!userInfo) {
+        // Redirect to Google OAuth if not authenticated
+        window.location.href = '/auth/google';
+        throw new Error('Not authenticated');
+      }
+      userId = userInfo.id;
     } else {
       socketServerHost = clientStore.getDocSetting('socketServerHost');
-      socketServerDocument = clientStore.getDocSetting('socketServerDocument');
-      socketServerPassword = clientStore.getDocSetting('socketServerPassword');
+      userId = clientStore.getDocSetting('socketServerUserId');
     }
 
     if (!socketServerHost) {
       throw new Error('No socket server host found');
     }
+    if (!userId) {
+      throw new Error('No user ID found');
+    }
+    
     const socket_backend = new ClientSocketBackend();
     // NOTE: we don't pass docname to DocumentStore since we want keys
     // to not have prefixes
     const dStore = new DocumentStore(socket_backend);
-    while (true) {
-      try {
-        await socket_backend.init(
-          socketServerHost, socketServerPassword || '', socketServerDocument || '');
-        break;
-      } catch (e:any) {
-        if (e === 'Wrong password!') {
-          socketServerPassword = prompt(
-            socketServerPassword ?
-              'Password incorrect!  Please try again: ' :
-              'Please enter the password',
-            '');
-        } else {
-          throw e;
-        }
-      }
+    try {
+      await socket_backend.init(socketServerHost, userId);
+    } catch (e:any) {
+      throw e;
     }
-    clientStore.setDocSetting('socketServerPassword', socketServerPassword);
-    logger.info(`Successfully initialized socked connection: ${socketServerHost}`);
+    
+    logger.info(`Successfully initialized socket connection: ${socketServerHost}`);
     return dStore;
   }
 

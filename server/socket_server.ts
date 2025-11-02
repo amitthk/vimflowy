@@ -5,43 +5,35 @@ import * as WebSocket from 'ws';
 import DataBackend, { InMemory } from '../src/shared/data_backend';
 import logger from '../src/shared/utils/logger';
 
-import { SQLiteBackend } from './data_backends';
+import { PostgresBackend } from './data_backends';
 
 type SocketServerOptions = {
   db?: string,
-  dbfolder?: string,
-  password?: string,
+  dbConnectionString?: string,
   path?: string,
 };
 
 export default function makeSocketServer(server: http.Server, options: SocketServerOptions) {
   const wss = new WebSocket.Server({ server, path: options.path });
 
-  const dbs: {[docname: string]: DataBackend} = {};
-  const clients: {[docname: string]: string} = {};
+  const dbs: {[userId: string]: DataBackend} = {};
+  const clients: {[userId: string]: string} = {};
 
-  async function getBackend(docname: string): Promise<DataBackend> {
-    if (docname in dbs) {
-      return dbs[docname];
+  async function getBackend(userId: string): Promise<DataBackend> {
+    if (userId in dbs) {
+      return dbs[userId];
     }
     let db: DataBackend;
-    if (options.db === 'sqlite') {
-      let filename;
-      if (options.dbfolder) {
-        filename = `${options.dbfolder}/${docname || 'vimflowy'}.sqlite`;
-        logger.info('Using sqlite database: ', filename);
-      } else {
-        filename = ':memory:';
-        logger.warn('Using in-memory sqlite database');
-      }
-      const sql_db = new SQLiteBackend();
-      await sql_db.init(filename);
-      db = sql_db;
+    if (options.db === 'postgres' && options.dbConnectionString) {
+      logger.info('Using PostgreSQL database for user:', userId);
+      const pg_db = new PostgresBackend(userId);
+      await pg_db.init(options.dbConnectionString);
+      db = pg_db;
     } else {
-      logger.info('Using in-memory database');
+      logger.info('Using in-memory database for user:', userId);
       db = new InMemory();
     }
-    dbs[docname] = db;
+    dbs[userId] = db;
     return db;
   }
 
@@ -54,7 +46,7 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
   wss.on('connection', function connection(ws) {
     logger.info('New socket connection!');
     let authed = false;
-    let docname: string | null = null;
+    let userId: string | null = null;
     ws.on('message', async (msg_string) => {
       logger.debug('received message: %s', msg_string);
       const msg = JSON.parse(msg_string);
@@ -68,19 +60,16 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
       }
 
       if (msg.type === 'join') {
-        if (options.password) {
-          if (msg.password !== options.password) {
-            return respond({ error: 'Wrong password!' });
-          }
+        if (!msg.userId) {
+          return respond({ error: 'User ID required!' });
         }
         authed = true;
-        docname = msg.docname;
-        clients[msg.docname] = msg.clientId;
-        // TODO: only broadcast to client on this document?
+        userId = msg.userId;
+        clients[msg.userId] = msg.clientId;
         broadcast({
           type: 'joined',
           clientId: msg.clientId,
-          docname: msg.docname,
+          userId: msg.userId,
         });
         return respond({ error: null });
       }
@@ -88,13 +77,13 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
       if (!authed) {
         return respond({ error: 'Not authenticated!' });
       }
-      if (docname == null) {
-        throw new Error('No docname!');
+      if (userId == null) {
+        throw new Error('No userId!');
       }
-      if (msg.clientId !== clients[docname]) {
+      if (msg.clientId !== clients[userId]) {
         return respond({ error: 'Other client connected!' });
       }
-      const db = await getBackend(docname);
+      const db = await getBackend(userId);
 
       if (msg.type === 'get') {
         const value = await db.get(msg.key);

@@ -5,6 +5,9 @@
 node_modules/
 npm-debug.log
 
+# Environment variables
+.env
+
 # vim swap files
 *.sw*
 # spacemacs files

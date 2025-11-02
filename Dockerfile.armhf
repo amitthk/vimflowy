@@ -1,35 +1,27 @@
-FROM armhf/node:7.8 AS build
-LABEL maintainer="e.amitthakur@gmail.com"
-LABEL version="0.0.1"
-# Prevent npm from spamming
+FROM node:16-alpine AS build
+LABEL maintainer="vimflowy"
+LABEL version="0.2.0"
 ENV NPM_CONFIG_LOGLEVEL=warn
 RUN npm config set progress=false
 WORKDIR /app/
 COPY package.json package-lock.json ./
-RUN npm rebuild node-sass \
-    && npm install --save @types/node@latest ts-node@latest --force \
-    && npm install
-
+RUN npm install
 COPY . .
-RUN mkdir -p /build/{client, server}
-RUN npm run build -- --outdir /build/client --socketserver
-RUN npm run buildserver -- --outdir /build/server
+RUN REACT_APP_SERVER_CONFIG='{"socketserver": true}' npm run build
 
-FROM armhf/node:7.8
+FROM node:16-alpine
 WORKDIR /app
 COPY --from=build /app/package.json /app/package-lock.json ./
 RUN npm install --production
-COPY --from=build /build/server/* ./
-RUN mkdir -p /app/static
-COPY --from=build /app/static/* /app/static/
-COPY --from=build /build/client /app/static/build
-VOLUME /app/db
+RUN mkdir -p /app/build
+COPY --from=build /app/build/ /app/build
 EXPOSE 3000
-ENV VIMFLOWY_PASSWORD=
-ENTRYPOINT node /app/server.js \
+ENV DATABASE_URL=
+ENV GOOGLE_CLIENT_ID=
+ENV GOOGLE_CLIENT_SECRET=
+ENV SESSION_SECRET=change-this-secret
+ENTRYPOINT npm run startprod -- \
     --host 0.0.0.0 \
     --port 3000 \
-    --staticDir /app/static \
-    --db sqlite \
-    --dbfolder /app/db \
-    --password $VIMFLOWY_PASSWORD
+    --staticDir /app/build \
+    --db postgres

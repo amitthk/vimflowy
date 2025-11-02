@@ -206,7 +206,7 @@ export default class BackendSettingsComponent extends React.Component<Props, Sta
         value: 'socketserver',
         info: `
           Client talks to a server over websockets.
-          Server stores data in SQLite.
+          Server stores data in PostgreSQL with user authentication.
         `,
         config: (
           <div>

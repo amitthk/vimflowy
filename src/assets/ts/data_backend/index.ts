@@ -209,13 +209,14 @@ export class ClientSocketBackend extends DataBackend {
   // init is like async constructor
   private ws!: WebSocket;
   private clientId: string;
+  private userId: string | null = null;
 
   constructor() {
     super();
     this.clientId = Date.now() + '-' + ('' + Math.random()).slice(2);
   }
 
-  private async connect(host: string, password: string, docname: string) {
+  private async connect(host: string, userId: string) {
     logger.info('Trying to connect', host);
     this.ws = new WebSocket(`${host}/socket`);
     this.ws.onerror = () => {
@@ -226,7 +227,7 @@ export class ClientSocketBackend extends DataBackend {
       // throw new Error('Socket connection closed!');
       logger.info('Socket connection closed! Trying to reconnect...');
       setTimeout(() => {
-        this.connect(host, password, docname);
+        this.connect(host, userId);
       }, 5000);
     };
 
@@ -250,7 +251,7 @@ export class ClientSocketBackend extends DataBackend {
         delete this.callback_table[id];
         callback(message.result);
       } else if (message.type === 'joined') {
-        if (message.docname === docname) {
+        if (message.userId === userId) {
           if (message.clientId !== this.clientId) {
             throw new MultipleUsersError();
           }
@@ -260,14 +261,14 @@ export class ClientSocketBackend extends DataBackend {
 
     await this.sendMessage({
       type: 'join',
-      password: password,
-      docname: docname,
+      userId: userId,
     });
   }
 
-  public async init(host: string, password: string, docname = '') {
+  public async init(host: string, userId: string) {
+    this.userId = userId;
     this.events.emit('saved');
-    await this.connect(host, password, docname);
+    await this.connect(host, userId);
   }
 
   private async sendMessage(message: Object): Promise<string | null> {
