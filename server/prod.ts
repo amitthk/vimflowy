@@ -38,6 +38,13 @@ async function main(args: any) {
           --buildDir: Where build assets should be served from.  Defaults to the \`build\`
             folder at the repo root.
 
+          Environment Variables (can be used instead of CLI args):
+          - DATABASE_URL: PostgreSQL connection string
+          - GOOGLE_CLIENT_ID: Google OAuth2 Client ID
+          - GOOGLE_CLIENT_SECRET: Google OAuth2 Client Secret
+          - SESSION_SECRET: Session encryption secret
+          - CALLBACK_URL: OAuth callback URL (optional, defaults to http://host:port/auth/google/callback)
+
     `, () => {
       process.exit(0);
     });
@@ -71,25 +78,41 @@ async function main(args: any) {
   logger.info('Starting production server');
   const app = express();
 
+  // Trust proxy when behind reverse proxy (for secure cookies)
+  app.set('trust proxy', 1);
+
+  // Body parsing middleware
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
   // Session configuration
   app.use(session({
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: process.env.NODE_ENV === 'production' }
+    cookie: { 
+      secure: process.env.NODE_ENV === 'production' && host !== 'localhost',
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
   }));
 
   app.use(passport.initialize());
   app.use(passport.session());
 
   // Passport configuration
+  const callbackURL = process.env.CALLBACK_URL || `http://${host}:${port}/auth/google/callback`;
+  
+  logger.info('Configuring Google OAuth with callback URL:', callbackURL);
+  
   passport.use(new GoogleStrategy({
       clientID: googleClientId,
       clientSecret: googleClientSecret,
-      callbackURL: `http://${host}:${port}/auth/google/callback`
+      callbackURL: callbackURL
     },
-    (accessToken, refreshToken, profile, done) => {
+    (_accessToken, _refreshToken, profile, done) => {
       // Store user profile
+      logger.info('User authenticated:', profile.displayName, profile.emails?.[0]?.value);
       const user = {
         id: profile.id,
         email: profile.emails?.[0]?.value,
@@ -107,33 +130,77 @@ async function main(args: any) {
     done(null, user);
   });
 
+  // Login page route
+  app.get('/login', (_req, res) => {
+    logger.info('Serving login page');
+    const loginPath = path.join(buildDir, 'login.html');
+    if (fs.existsSync(loginPath)) {
+      res.sendFile(loginPath);
+    } else {
+      // Fallback to public folder during development
+      const publicLoginPath = path.join(__dirname, '../public/login.html');
+      if (fs.existsSync(publicLoginPath)) {
+        res.sendFile(publicLoginPath);
+      } else {
+        res.status(404).send('Login page not found. Please build the application first.');
+      }
+    }
+  });
+
   // Auth routes
   app.get('/auth/google',
+    (_req, _res, next) => {
+      logger.info('Starting Google OAuth flow');
+      next();
+    },
     passport.authenticate('google', { scope: ['profile', 'email'] })
   );
 
   app.get('/auth/google/callback',
+    (_req, _res, next) => {
+      logger.info('Google OAuth callback received');
+      next();
+    },
     passport.authenticate('google', { failureRedirect: '/login' }),
-    (req, res) => {
+    (_req, res) => {
+      logger.info('Authentication successful, redirecting to home');
       res.redirect('/');
     }
   );
 
   app.get('/auth/logout', (req, res) => {
+    logger.info('User logging out');
     req.logout(() => {
-      res.redirect('/');
+      res.redirect('/login');
     });
   });
 
   app.get('/auth/user', (req, res) => {
     if (req.isAuthenticated()) {
+      logger.info('User info requested:', req.user);
       res.json(req.user);
     } else {
+      logger.info('User info requested but not authenticated');
       res.status(401).json({ error: 'Not authenticated' });
     }
   });
 
-  // Serve static files
+  // Middleware to require authentication for all routes except auth and login
+  app.use((req, res, next) => {
+    // Allow auth routes and login page
+    if (req.path.startsWith('/auth/') || req.path === '/login' || req.path === '/login.html') {
+      return next();
+    }
+    
+    // Require authentication for everything else
+    if (!req.isAuthenticated()) {
+      return res.redirect('/login');
+    }
+    
+    next();
+  });
+
+  // Serve static files (protected by auth middleware above)
   app.use(express.static(buildDir));
 
   const server = http.createServer(app as any);
