@@ -1,0 +1,36 @@
+# Copy to wrangler.toml and fill in your Cloudflare account values (wrangler.toml is gitignored).
+#   cp wrangler.toml.example wrangler.toml
+# Then: npx wrangler secret put DIRECTUS_STATIC_TOKEN
+# Deploy: npm run deploy:cloudflare
+
+name = "vimflowy-worker"
+main = "./cloudflare/worker.js"
+compatibility_date = "2026-03-26"
+workers_dev = true
+
+[assets]
+directory = "./build"
+binding = "ASSETS"
+
+[vars]
+# Public Directus base URL (no trailing slash required by worker code, but keep it clean).
+DIRECTUS_STATIC_URL = "https://your-directus.example.com"
+
+# Set at deploy time (not stored in this file):
+#   npx wrangler secret put DIRECTUS_STATIC_TOKEN
+
+# Create a KV namespace in the Cloudflare dashboard (Workers → KV), then paste its id:
+[[kv_namespaces]]
+binding = "SESSION_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# Create an R2 bucket in the dashboard, then use its name:
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "your-vimflowy-bucket"
+
+# Optional: attach a custom hostname (Workers Custom Domain).
+# Remove this block if you only use *.workers.dev.
+[[routes]]
+pattern = "vimflowy.yourdomain.com"
+custom_domain = true

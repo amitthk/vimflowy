@@ -16,12 +16,8 @@ RUN npm install --production
 RUN mkdir -p /app/build
 COPY --from=build /app/build/ /app/build
 EXPOSE 3000
-ENV DATABASE_URL=
-ENV GOOGLE_CLIENT_ID=
-ENV GOOGLE_CLIENT_SECRET=
-ENV SESSION_SECRET=change-this-secret
+ENV DIRECTUS_STATIC_URL=
+ENV DIRECTUS_STATIC_TOKEN=
 ENTRYPOINT npm run startprod -- \
     --host 0.0.0.0 \
-    --port 3000 \
-    --staticDir /app/build \
-    --db postgres
+    --port 3000

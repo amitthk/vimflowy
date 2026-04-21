@@ -123,16 +123,12 @@ export default class BackendSettingsComponent extends React.Component<Props, Sta
             Stores data in Google's Firebase cloud service.
             Regular backups can be turned on.
             {' '}
-            <a href={'https://github.com/WuTheFWasThat/vimflowy/tree/master/docs/storage/Firebase.md'}>
-              Details here
-            </a>.
+            See docs/FIREBASE.md in this repository for current notes.
           </div>
         ),
         config: (
           <div>
-            For details on configuration, <a href={'https://github.com/WuTheFWasThat/vimflowy/tree/master/docs/storage/Firebase.md'}>
-              see here
-            </a>.
+            For details on configuration, see docs/FIREBASE.md in this repository.
             <br/>
             <table><tbody>
               <tr>
@@ -205,14 +201,13 @@ export default class BackendSettingsComponent extends React.Component<Props, Sta
         type: 'Remote',
         value: 'socketserver',
         info: `
-          Client talks to a server over websockets.
-          Server stores data in PostgreSQL with user authentication.
+          Client talks to a server over WebSockets.
+          Current servers authenticate the socket with the same session you get from the web login (HTTP),
+          not this form's password field (legacy; you can leave it blank).
         `,
         config: (
           <div>
-            For details on configuration, <a href={'https://github.com/WuTheFWasThat/vimflowy/tree/master/docs/storage/socket_server.md'}>
-              see here
-            </a>.
+            For self-hosted setups, see README.txt (section &quot;Vimflowy server / WebSocket&quot;).
             <br/>
             <table><tbody>
               <tr>
@@ -222,7 +217,7 @@ export default class BackendSettingsComponent extends React.Component<Props, Sta
                 <td>
                   <input type='text'
                     value={this.state.socketServerHost}
-                    placeholder='e.g. ws://localhost:3000 or wss://54.0.0.1:3000'
+                    placeholder='e.g. ws://localhost:8300 or wss://your-host.example.com'
                     onChange={(ev) => this.setSocketServerHost((ev.target as HTMLInputElement).value)}
                     style={{float: 'right'}}
                   />
@@ -230,11 +225,12 @@ export default class BackendSettingsComponent extends React.Component<Props, Sta
               </tr>
               <tr>
                 <td>
-                  Password
+                  Password (unused)
                 </td>
                 <td>
                   <input type='password'
                     value={this.state.socketServerPassword}
+                    placeholder='Leave blank'
                     onChange={(ev) => this.setSocketServerPassword((ev.target as HTMLInputElement).value)}
                     style={{float: 'right'}}
                   />

@@ -5,12 +5,14 @@ import * as WebSocket from 'ws';
 import DataBackend, { InMemory } from '../src/shared/data_backend';
 import logger from '../src/shared/utils/logger';
 
-import { PostgresBackend } from './data_backends';
+import AuthService from './auth';
+import { DirectusBackend } from './data_backends';
 
 type SocketServerOptions = {
-  db?: string,
-  dbConnectionString?: string,
+  directusUrl?: string,
+  directusToken?: string,
   path?: string,
+  authService: AuthService,
 };
 
 export default function makeSocketServer(server: http.Server, options: SocketServerOptions) {
@@ -24,11 +26,9 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
       return dbs[userId];
     }
     let db: DataBackend;
-    if (options.db === 'postgres' && options.dbConnectionString) {
-      logger.info('Using PostgreSQL database for user:', userId);
-      const pg_db = new PostgresBackend(userId);
-      await pg_db.init(options.dbConnectionString);
-      db = pg_db;
+    if (options.directusUrl && options.directusToken) {
+      logger.info('Using Directus database for user:', userId);
+      db = new DirectusBackend(userId, options.directusUrl, options.directusToken);
     } else {
       logger.info('Using in-memory database for user:', userId);
       db = new InMemory();
@@ -49,7 +49,18 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
     let userId: string | null = null;
     ws.on('message', async (msg_string) => {
       logger.debug('received message: %s', msg_string);
-      const msg = JSON.parse(msg_string);
+      let msg: any;
+      try {
+        const raw = typeof msg_string === 'string' ? msg_string : msg_string.toString();
+        msg = JSON.parse(raw);
+      } catch (_err) {
+        ws.send(JSON.stringify({
+          type: 'callback',
+          id: null,
+          result: { error: 'Invalid JSON payload' },
+        }));
+        return;
+      }
 
       function respond(result: { value?: any, error: string | null }) {
         ws.send(JSON.stringify({
@@ -60,16 +71,20 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
       }
 
       if (msg.type === 'join') {
-        if (!msg.userId) {
-          return respond({ error: 'User ID required!' });
+        if (!msg.token) {
+          return respond({ error: 'Auth token required!' });
+        }
+        const user = options.authService.getSession(msg.token);
+        if (!user) {
+          return respond({ error: 'Invalid or expired auth token' });
         }
         authed = true;
-        userId = msg.userId;
-        clients[msg.userId] = msg.clientId;
+        userId = user.id;
+        clients[user.id] = msg.clientId;
         broadcast({
           type: 'joined',
           clientId: msg.clientId,
-          userId: msg.userId,
+          userId: user.id,
         });
         return respond({ error: null });
       }
@@ -93,6 +108,16 @@ export default function makeSocketServer(server: http.Server, options: SocketSer
         await db.set(msg.key, msg.value);
         logger.debug('set', msg.key, msg.value);
         respond({ error: null });
+      } else if (msg.type === 'setMany') {
+        if (!Array.isArray(msg.entries)) {
+          return respond({ error: 'entries must be an array' });
+        }
+        const entries = msg.entries.filter((entry: any) => entry && typeof entry.key === 'string');
+        await db.setMany(entries);
+        logger.debug('setMany', entries.length);
+        respond({ error: null });
+      } else {
+        respond({ error: `Unknown message type "${msg.type}"` });
       }
     });
 

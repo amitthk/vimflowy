@@ -145,12 +145,25 @@ $(document).ready(async () => {
   }
 
   async function getUserInfo(): Promise<{id: string, email: string, name: string} | null> {
+    const token = localStorage.getItem('vimflowy_auth_token');
+    if (!token) {
+      return null;
+    }
     try {
-      const response = await fetch('/auth/user', {
-        credentials: 'include'
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
       if (response.ok) {
-        return await response.json();
+        const payload = await response.json();
+        const user = payload.user || {};
+        const id = user.id != null && user.id !== '' ? String(user.id) : '';
+        return {
+          id,
+          email: user.username || '',
+          name: user.display_name || user.username || '',
+        };
       }
       return null;
     } catch (e) {
@@ -169,8 +182,7 @@ $(document).ready(async () => {
       // Get user info from authentication
       const userInfo = await getUserInfo();
       if (!userInfo) {
-        // Redirect to Google OAuth if not authenticated
-        window.location.href = '/auth/google';
+        window.location.href = '/login.html';
         throw new Error('Not authenticated');
       }
       userId = userInfo.id;
@@ -191,7 +203,8 @@ $(document).ready(async () => {
     // to not have prefixes
     const dStore = new DocumentStore(socket_backend);
     try {
-      await socket_backend.init(socketServerHost, userId);
+      const token = localStorage.getItem('vimflowy_auth_token') || '';
+      await socket_backend.init(socketServerHost, userId, token);
     } catch (e:any) {
       throw e;
     }

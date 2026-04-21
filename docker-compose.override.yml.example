@@ -1,0 +1,11 @@
+# Optional: copy to docker-compose.override.yml (gitignored) for machine-specific
+# settings. Compose merges this file automatically when present.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# Example — pin tokens only on this host (prefer .env for most cases):
+#
+# services:
+#   app:
+#     environment:
+#       DIRECTUS_STATIC_TOKEN: "replace-me"

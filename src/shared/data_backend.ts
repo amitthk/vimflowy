@@ -16,6 +16,12 @@ export default class DataBackend {
   public async set(_key: string, _value: string): Promise<void> {
     throw new errors.NotImplemented();
   }
+
+  public async setMany(entries: Array<{ key: string, value: string }>): Promise<void> {
+    for (const entry of entries) {
+      await this.set(entry.key, entry.value);
+    }
+  }
 }
 
 export class SynchronousDataBackend {

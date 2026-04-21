@@ -205,11 +205,18 @@ export class ClientSocketBackend extends DataBackend {
   public events: EventEmitter = new EventEmitter();
   private numPendingSaves: number = 0;
   private callback_table: {[id: string]: (result: any) => void} = {};
+  private pendingWrites: {[key: string]: string} = {};
+  private dirty: boolean = false;
+  private flushTimer: number | null = null;
+  private readonly flushIntervalMs: number = 250;
+  private reconnectTimer: number | null = null;
 
   // init is like async constructor
   private ws!: WebSocket;
   private clientId: string;
   private userId: string | null = null;
+  private authToken: string = '';
+  private connected: boolean = false;
 
   constructor() {
     super();
@@ -220,15 +227,19 @@ export class ClientSocketBackend extends DataBackend {
     logger.info('Trying to connect', host);
     this.ws = new WebSocket(`${host}/socket`);
     this.ws.onerror = () => {
-      // throw new Error(`Socket connection error: ${err}`);
       logger.info('Socket connection error!');
     };
     this.ws.onclose = () => {
-      // throw new Error('Socket connection closed!');
+      this.connected = false;
       logger.info('Socket connection closed! Trying to reconnect...');
-      setTimeout(() => {
-        this.connect(host, userId);
-      }, 5000);
+      if (this.reconnectTimer !== null) {
+        window.clearTimeout(this.reconnectTimer);
+      }
+      this.reconnectTimer = window.setTimeout(() => {
+        this.connect(host, userId).catch((err) => {
+          logger.error('Reconnect failed:', err);
+        });
+      }, 2000);
     };
 
     await new Promise((resolve, reject) => {
@@ -238,9 +249,9 @@ export class ClientSocketBackend extends DataBackend {
       }, 5000);
     });
     logger.info('Connected', host);
+    this.connected = true;
 
     this.ws.onmessage = (event) => {
-      // tslint:disable-next-line no-console
       const message = JSON.parse(event.data);
       if (message.type === 'callback') {
         const id: string = message.id;
@@ -261,12 +272,17 @@ export class ClientSocketBackend extends DataBackend {
 
     await this.sendMessage({
       type: 'join',
-      userId: userId,
+      token: this.authToken,
+    });
+
+    this.flushNow().catch((err) => {
+      logger.error('Flush after reconnect failed:', err);
     });
   }
 
-  public async init(host: string, userId: string) {
+  public async init(host: string, userId: string, authToken: string) {
     this.userId = userId;
+    this.authToken = authToken;
     this.events.emit('saved');
     await this.connect(host, userId);
   }
@@ -302,19 +318,49 @@ export class ClientSocketBackend extends DataBackend {
     if (this.numPendingSaves === 0) {
       this.events.emit('unsaved');
     }
-    logger.debug('Socket client: setting', key, 'to', value);
-    this.numPendingSaves++;
-
-    this.sendMessage({
-      type: 'set',
-      key: key,
-      value: value,
-    }).then(() => {
-      this.numPendingSaves--;
-      if (this.numPendingSaves === 0) {
-        this.events.emit('saved');
-      }
-    });
+    this.pendingWrites[key] = value;
+    this.dirty = true;
+    this.numPendingSaves = Object.keys(this.pendingWrites).length;
+    this.scheduleFlush();
     return Promise.resolve();
+  }
+
+  private scheduleFlush() {
+    if (this.flushTimer !== null) {
+      return;
+    }
+    this.flushTimer = window.setTimeout(() => {
+      this.flushTimer = null;
+      this.flushNow().catch((err) => {
+        logger.error('Flush failed:', err);
+        this.scheduleFlush();
+      });
+    }, this.flushIntervalMs);
+  }
+
+  private async flushNow() {
+    if (!this.connected || !this.dirty) {
+      return;
+    }
+    const entries = Object.keys(this.pendingWrites).map((key) => ({
+      key,
+      value: this.pendingWrites[key],
+    }));
+    if (entries.length === 0) {
+      this.dirty = false;
+      this.numPendingSaves = 0;
+      this.events.emit('saved');
+      return;
+    }
+
+    await this.sendMessage({
+      type: 'setMany',
+      entries,
+    });
+
+    this.pendingWrites = {};
+    this.dirty = false;
+    this.numPendingSaves = 0;
+    this.events.emit('saved');
   }
 }
