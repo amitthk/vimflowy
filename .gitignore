@@ -38,3 +38,4 @@ docker-compose.override.yml
 
 .eslintcache
 .serverless
+.wrangler/
