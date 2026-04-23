@@ -137,6 +137,7 @@ type BlockProps = {
   onCharClick: ((path: Path, column: Col, e: Event) => void) | undefined;
   onLineClick: ((path: Path) => void) | undefined;
   onBulletClick: ((path: Path) => void) | undefined;
+  onDeleteClick: ((path: Path) => void) | undefined;
   topLevel: boolean;
   fetchData: () => void;
 };
@@ -271,10 +272,25 @@ export default class BlockComponent extends React.Component<BlockProps, {}> {
         );
         bullet = session.applyHook('renderBullet', bullet, { path });
 
+        let deleteButton: React.ReactNode | null = null;
+        if (this.props.onDeleteClick != null) {
+          deleteButton = (
+            <i className='fa fa-trash bullet delete-icon' key='delete'
+              title='Delete node'
+              style={{ cursor: 'pointer', marginLeft: 4, opacity: 0.4 }}
+              onClick={(e: any) => {
+                e.stopPropagation();
+                this.props.onDeleteClick!(path);
+              }}
+            />
+          );
+        }
+
         return (
           <div key={path.row}>
             {cloneIcon}
             {bullet}
+            {deleteButton}
             <BlockComponent key='block'
              cached={cachedChild}
              topLevel={false}
@@ -282,6 +298,7 @@ export default class BlockComponent extends React.Component<BlockProps, {}> {
              onCharClick={this.props.onCharClick}
              onLineClick={this.props.onLineClick}
              onBulletClick={this.props.onBulletClick}
+             onDeleteClick={this.props.onDeleteClick}
              session={session} path={path}
              cursorBetween={this.props.cursorBetween}
              fetchData={this.props.fetchData}

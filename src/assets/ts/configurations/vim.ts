@@ -108,7 +108,7 @@ export const NORMAL_MODE_MAPPINGS: HotkeyMapping = Object.assign({
   'swap-block-up': [['ctrl+k']],
   'search-local': [['ctrl+/'], ['ctrl+f']],
   'search-global': [['/']],
-  'export-file': [['ctrl+s']],
+  'export-file': [['ctrl+shift+s'], ['meta+shift+s']],
   'zoom-prev-sibling': [['alt+k']],
   'zoom-next-sibling': [['alt+j']],
   'zoom-in': [[']'], ['alt+l'], ['ctrl+right']],

@@ -110,6 +110,89 @@ export class IndexedDBBackend extends DataBackend {
   }
 }
 
+export class ManualSaveBackend extends DataBackend {
+  public events: EventEmitter = new EventEmitter();
+  private backend: DataBackend;
+  private pendingWrites: {[key: string]: string} = {};
+  private dirty: boolean = false;
+
+  constructor(backend: DataBackend) {
+    super();
+    this.backend = backend;
+  }
+
+  public async get(key: string): Promise<string | null> {
+    if (key in this.pendingWrites) {
+      return this.pendingWrites[key];
+    }
+    return this.backend.get(key);
+  }
+
+  public async set(key: string, value: string): Promise<void> {
+    const wasDirty = this.dirty;
+    this.pendingWrites[key] = value;
+    this.dirty = true;
+    if (!wasDirty) {
+      this.events.emit('unsaved');
+    }
+  }
+
+  public async flush(): Promise<void> {
+    if (!this.dirty) {
+      return;
+    }
+    const entries = Object.keys(this.pendingWrites).map((key) => ({
+      key,
+      value: this.pendingWrites[key],
+    }));
+    await this.backend.setMany(entries);
+    this.pendingWrites = {};
+    this.dirty = false;
+    this.events.emit('saved');
+  }
+}
+
+export class AuthenticatedServerBackend extends DataBackend {
+  private authToken: string;
+
+  constructor(authToken: string) {
+    super();
+    this.authToken = authToken;
+  }
+
+  private async request(path: string, body: Object): Promise<any> {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.authToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `Request failed with ${response.status}`);
+    }
+    return payload;
+  }
+
+  public async get(key: string): Promise<string | null> {
+    const payload = await this.request('/api/data/get', { key });
+    if (typeof payload.value === 'string' || payload.value === null) {
+      return payload.value;
+    }
+    return null;
+  }
+
+  public async set(key: string, value: string): Promise<void> {
+    await this.setMany([{ key, value }]);
+  }
+
+  public async setMany(entries: Array<{ key: string, value: string }>): Promise<void> {
+    await this.request('/api/data/setMany', { entries });
+  }
+}
+
 export class FirebaseBackend extends DataBackend {
   public events: EventEmitter = new EventEmitter();
 
@@ -199,16 +282,31 @@ export class FirebaseBackend extends DataBackend {
     );
     return Promise.resolve();
   }
+
+  public async flush(): Promise<void> {
+    if (this.numPendingSaves === 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.events.once('saved', () => resolve());
+    });
+  }
 }
 
 export class ClientSocketBackend extends DataBackend {
   public events: EventEmitter = new EventEmitter();
   private numPendingSaves: number = 0;
-  private callback_table: {[id: string]: (result: any) => void} = {};
+  private callback_table: {[id: string]: {
+    resolve: (result: string | null) => void,
+    reject: (err: any) => void,
+    timeoutId: number,
+  }} = {};
   private pendingWrites: {[key: string]: string} = {};
   private dirty: boolean = false;
   private flushTimer: number | null = null;
+  private flushInFlight: boolean = false;
   private readonly flushIntervalMs: number = 250;
+  private readonly requestTimeoutMs: number = 8000;
   private reconnectTimer: number | null = null;
 
   // init is like async constructor
@@ -231,6 +329,7 @@ export class ClientSocketBackend extends DataBackend {
     };
     this.ws.onclose = () => {
       this.connected = false;
+      this.rejectPendingCallbacks(new Error('Socket connection closed before response was received'));
       logger.info('Socket connection closed! Trying to reconnect...');
       if (this.reconnectTimer !== null) {
         window.clearTimeout(this.reconnectTimer);
@@ -243,10 +342,13 @@ export class ClientSocketBackend extends DataBackend {
     };
 
     await new Promise((resolve, reject) => {
-      this.ws.onopen = resolve;
-      setTimeout(() => {
-        reject('Timed out trying to connect!');
+      const timeoutId = window.setTimeout(() => {
+        reject(new Error('Timed out trying to connect!'));
       }, 5000);
+      this.ws.onopen = () => {
+        window.clearTimeout(timeoutId);
+        resolve(null);
+      };
     });
     logger.info('Connected', host);
     this.connected = true;
@@ -256,11 +358,17 @@ export class ClientSocketBackend extends DataBackend {
       if (message.type === 'callback') {
         const id: string = message.id;
         if (!(id in this.callback_table)) {
-          throw new Error(`ID ${id} not found in callback table`);
+          logger.warn(`ID ${id} not found in callback table`);
+          return;
         }
         const callback = this.callback_table[id];
+        window.clearTimeout(callback.timeoutId);
         delete this.callback_table[id];
-        callback(message.result);
+        if (message.result.error) {
+          callback.reject(message.result.error);
+        } else {
+          callback.resolve(message.result.value);
+        }
       } else if (message.type === 'joined') {
         if (message.userId === userId) {
           if (message.clientId !== this.clientId) {
@@ -287,17 +395,33 @@ export class ClientSocketBackend extends DataBackend {
     await this.connect(host, userId);
   }
 
+  private rejectPendingCallbacks(error: Error) {
+    const callbackIds = Object.keys(this.callback_table);
+    for (let i = 0; i < callbackIds.length; i++) {
+      const callbackId = callbackIds[i];
+      const callback = this.callback_table[callbackId];
+      window.clearTimeout(callback.timeoutId);
+      callback.reject(error);
+      delete this.callback_table[callbackId];
+    }
+  }
+
   private async sendMessage(message: Object): Promise<string | null> {
     return new Promise((resolve: (result: string | null) => void, reject) => {
+      if (!this.connected || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error('Socket client is disconnected'));
+        return;
+      }
       const id = Date.now() + '-' + ('' + Math.random()).slice(2);
       if (id in this.callback_table) { throw new Error('Duplicate IDs!?'); }
-      this.callback_table[id] = (result) => {
-        if (result.error) {
-          reject(result.error);
-        } else {
-          resolve(result.value);
+      const timeoutId = window.setTimeout(() => {
+        if (!(id in this.callback_table)) {
+          return;
         }
-      };
+        delete this.callback_table[id];
+        reject(new Error(`Socket request timed out (${this.requestTimeoutMs}ms)`));
+      }, this.requestTimeoutMs);
+      this.callback_table[id] = { resolve, reject, timeoutId };
       this.ws.send(JSON.stringify({
         ...message,
         id: id,
@@ -320,7 +444,7 @@ export class ClientSocketBackend extends DataBackend {
     }
     this.pendingWrites[key] = value;
     this.dirty = true;
-    this.numPendingSaves = Object.keys(this.pendingWrites).length;
+    this.numPendingSaves = Object.keys(this.pendingWrites).length + (this.flushInFlight ? 1 : 0);
     this.scheduleFlush();
     return Promise.resolve();
   }
@@ -338,29 +462,72 @@ export class ClientSocketBackend extends DataBackend {
     }, this.flushIntervalMs);
   }
 
-  private async flushNow() {
-    if (!this.connected || !this.dirty) {
+  private async flushNow(options: { failIfDisconnected?: boolean } = {}) {
+    const { failIfDisconnected = false } = options;
+    if (!this.dirty) {
       return;
     }
-    const entries = Object.keys(this.pendingWrites).map((key) => ({
-      key,
-      value: this.pendingWrites[key],
-    }));
-    if (entries.length === 0) {
+    if (this.flushInFlight) {
+      return;
+    }
+    if (!this.connected) {
+      if (failIfDisconnected) {
+        throw new Error('Cannot flush while socket is disconnected');
+      }
+      return;
+    }
+    const batch: {[key: string]: string} = this.pendingWrites;
+    const batchKeys = Object.keys(batch);
+    if (batchKeys.length === 0) {
       this.dirty = false;
       this.numPendingSaves = 0;
       this.events.emit('saved');
       return;
     }
 
-    await this.sendMessage({
-      type: 'setMany',
-      entries,
-    });
-
     this.pendingWrites = {};
     this.dirty = false;
+    this.flushInFlight = true;
+    this.numPendingSaves = batchKeys.length;
+
+    try {
+      await this.sendMessage({
+        type: 'setMany',
+        entries: batchKeys.map((key) => ({
+          key,
+          value: batch[key],
+        })),
+      });
+    } catch (err) {
+      // Re-queue failed writes unless newer values already replaced them.
+      batchKeys.forEach((key) => {
+        if (!(key in this.pendingWrites)) {
+          this.pendingWrites[key] = batch[key];
+        }
+      });
+      this.dirty = Object.keys(this.pendingWrites).length > 0;
+      this.numPendingSaves = Object.keys(this.pendingWrites).length;
+      throw err;
+    } finally {
+      this.flushInFlight = false;
+    }
+
+    const remaining = Object.keys(this.pendingWrites).length;
+    if (remaining > 0) {
+      this.dirty = true;
+      this.numPendingSaves = remaining;
+      this.scheduleFlush();
+      return;
+    }
     this.numPendingSaves = 0;
     this.events.emit('saved');
+  }
+
+  public async flush(): Promise<void> {
+    if (this.flushTimer !== null) {
+      window.clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    await this.flushNow({ failIfDisconnected: true });
   }
 }

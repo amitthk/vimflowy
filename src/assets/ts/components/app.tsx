@@ -26,6 +26,7 @@ type Props = {
   showingKeyBindings: boolean;
   keyBindings: KeyBindings;
   initialBackendType: BackendType;
+  onSave: () => void;
   error: Error | null;
 };
 
@@ -208,6 +209,16 @@ export default class AppComponent extends React.Component<Props, {}> {
               className={saveMessage.text_class}>
               {saveMessage.message}
             </div>
+            <a className='center'
+              onClick={() => this.props.onSave()}
+              style={{
+                flexBasis: 80, flexGrow: 0,
+                cursor: 'pointer', textDecoration: 'none',
+                ...getStyles(session.clientStore, ['theme-bg-secondary'])
+              }}
+            >
+              Save
+            </a>
             {/* should be wide enough to fit the words 'VISUAL LINE'*/}
             <div className='center'
               style={{

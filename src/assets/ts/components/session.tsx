@@ -19,6 +19,7 @@ type Props = {
 };
 type State = {
   loaded: boolean;
+  loadError: string | null;
 
   // set after data is loaded
   cursorsTree?: CursorsInfoTree;
@@ -29,6 +30,9 @@ type Profiler = (profilerMessage: string) => () => void;
 
 export default class SessionComponent extends React.Component<Props, State> {
   private update: () => void; // this is promise debounced
+  private fetchingData: boolean = false;
+  private fetchAttempts: number = 0;
+  private readonly maxFetchAttempts: number = 3;
 
   private profileRender: boolean; // for debugging
   private getProfiler: (profileRender: boolean) => Profiler;
@@ -36,11 +40,13 @@ export default class SessionComponent extends React.Component<Props, State> {
   private onLineClick: (path: Path) => Promise<void>;
   private onBulletClick: (path: Path) => Promise<void>;
   private onCrumbClick: (path: Path) => Promise<void>;
+  private onDeleteClick: (path: Path) => Promise<void>;
 
   constructor(props: Props) {
     super(props);
     this.state = {
       loaded: false,
+      loadError: null,
     };
 
     this.onCharClick = (path, column, e) => {
@@ -78,6 +84,16 @@ export default class SessionComponent extends React.Component<Props, State> {
       const session = this.props.session;
 
       await session.zoomInto(path);
+      session.save();
+      this.update();
+    };
+
+    this.onDeleteClick = async (path) => {
+      const session = this.props.session;
+      const parent = path.parent;
+      if (!parent) return;
+      const index = await session.document.indexInParent(path);
+      await session.delBlocks(parent.row, index, 1, { addNew: false });
       session.save();
       this.update();
     };
@@ -142,6 +158,7 @@ export default class SessionComponent extends React.Component<Props, State> {
         crumbContents,
         cursorsTree,
         loaded: true,
+        loadError: null,
       });
 
       finishProfiling();
@@ -149,12 +166,43 @@ export default class SessionComponent extends React.Component<Props, State> {
   }
 
   private async fetchAndRerender() {
+    if (this.fetchingData) {
+      return;
+    }
+    this.fetchAttempts++;
+    if (this.fetchAttempts > this.maxFetchAttempts) {
+      logger.error('Data loading failed after maximum retries');
+      this.setState({
+        loaded: true,
+        loadError: 'Failed to load document after multiple attempts. Please refresh the page.',
+      });
+      return;
+    }
+    this.fetchingData = true;
     const session = this.props.session;
     const finishProfiling = this.getProfiler(this.profileRender)('forceLoadTree took');
 
-    await session.document.forceLoadTree(session.viewRoot.row, true);
+    try {
+      const forceLoadPromise = session.document.forceLoadTree(session.viewRoot.row, true);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Tree loading timed out after 15 seconds')), 15000);
+      });
+      await Promise.race([forceLoadPromise, timeoutPromise]);
+      this.setState({
+        loadError: null,
+      });
+    } catch (err:any) {
+      logger.error('Failed to load tree for rendering:', err);
+      this.setState({
+        loaded: true,
+        loadError: `Failed to load document tree: ${err && err.message ? err.message : err}`,
+      });
+    } finally {
+      this.fetchingData = false;
+    }
 
     finishProfiling();
+    this.fetchAttempts = 0;
     this.update();
   }
 
@@ -174,6 +222,13 @@ export default class SessionComponent extends React.Component<Props, State> {
   public render() {
     const session = this.props.session;
     if (!this.state.loaded) { return <Spinner/>; }
+    if (this.state.loadError) {
+      return (
+        <div style={{ padding: 12, opacity: 0.8 }}>
+          {this.state.loadError}
+        </div>
+      );
+    }
 
     const crumbContents = this.state.crumbContents;
     if (crumbContents == null) {
@@ -240,6 +295,7 @@ export default class SessionComponent extends React.Component<Props, State> {
           onCharClick={onCharClick}
           onLineClick={onLineClick}
           onBulletClick={this.onBulletClick}
+          onDeleteClick={this.onDeleteClick}
           fetchData={this.fetchAndRerender}
         />
       </div>

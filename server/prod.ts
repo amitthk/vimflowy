@@ -8,10 +8,12 @@ import minimist from 'minimist';
 import dotenv from 'dotenv';
 
 import logger from '../src/shared/utils/logger';
+import DataBackend, { InMemory } from '../src/shared/data_backend';
 
 import AuthService from './auth';
 import makeSocketServer from './socket_server';
 import { defaultBuildDir } from './constants';
+import { DirectusBackend } from './data_backends';
 
 // Load environment variables
 dotenv.config();
@@ -72,6 +74,21 @@ async function main(args: any) {
 
   const auth = new AuthService(directusUrl, directusToken);
   await auth.ping();
+  const backends: {[userId: string]: DataBackend} = {};
+
+  async function getBackendForUser(userId: string): Promise<DataBackend> {
+    if (backends[userId]) {
+      return backends[userId];
+    }
+    let backend: DataBackend;
+    if (directusUrl && directusToken) {
+      backend = new DirectusBackend(userId, directusUrl, directusToken);
+    } else {
+      backend = new InMemory();
+    }
+    backends[userId] = backend;
+    return backend;
+  }
 
   logger.info('Starting production server');
   const app = express();
@@ -107,6 +124,67 @@ async function main(args: any) {
     const token = readBearerToken(req);
     auth.logout(token);
     return res.json({ ok: true });
+  });
+
+  app.get('/api/documents', async (req, res) => {
+    const token = readBearerToken(req);
+    const user = auth.getSession(token);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    try {
+      const backend = await getBackendForUser(user.id);
+      if (typeof (backend as any).listDocumentNames === 'function') {
+        const names = await (backend as any).listDocumentNames();
+        return res.json({ documents: names });
+      } else {
+        // Backend doesn't support document listing
+        return res.json({ documents: [] });
+      }
+    } catch (err: any) {
+      logger.error('List documents failed:', err.message);
+      return res.status(500).json({ error: 'Failed to list documents' });
+    }
+  });
+
+  app.post('/api/data/get', async (req, res) => {
+    const token = readBearerToken(req);
+    const user = auth.getSession(token);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const key = req.body && req.body.key;
+    if (typeof key !== 'string' || key.length === 0) {
+      return res.status(400).json({ error: 'Key is required' });
+    }
+    try {
+      const backend = await getBackendForUser(user.id);
+      const value = await backend.get(key);
+      return res.json({ value });
+    } catch (err: any) {
+      logger.error('Data get failed:', err.message);
+      return res.status(500).json({ error: 'Failed to read data' });
+    }
+  });
+
+  app.post('/api/data/setMany', async (req, res) => {
+    const token = readBearerToken(req);
+    const user = auth.getSession(token);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const entriesRaw = req.body && req.body.entries;
+    const entries = Array.isArray(entriesRaw) ? entriesRaw.filter((entry: any) => (
+      entry && typeof entry.key === 'string' && typeof entry.value === 'string'
+    )) : [];
+    try {
+      const backend = await getBackendForUser(user.id);
+      await backend.setMany(entries);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      logger.error('Data setMany failed:', err.message);
+      return res.status(500).json({ error: 'Failed to write data' });
+    }
   });
 
   app.use(express.static(buildDir));

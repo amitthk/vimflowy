@@ -220,6 +220,11 @@ export class DocumentStore {
     this.docname = docname;
     this.prefix = `${this.docname}save`;
     this.lastId = null;
+    const eventBackend: any = backend as any;
+    if (eventBackend.events && typeof eventBackend.events.on === 'function') {
+      eventBackend.events.on('saved', () => this.events.emit('saved'));
+      eventBackend.events.on('unsaved', () => this.events.emit('unsaved'));
+    }
   }
 
   private async _get<T>(
@@ -394,5 +399,9 @@ export class DocumentStore {
       this.setCollapsed(id, false),
     ]);
     return id;
+  }
+
+  public async flush(): Promise<void> {
+    await this.backend.flush();
   }
 }

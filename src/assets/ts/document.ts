@@ -220,6 +220,23 @@ export default class Document extends EventEmitter {
     return this;
   }
 
+  private normalizeRows(rows: any): Array<Row> {
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+    return rows
+      .map((row) => {
+        if (typeof row === 'number' && Number.isFinite(row)) {
+          return row;
+        }
+        if (typeof row === 'string' && row.trim() !== '' && /^\d+$/.test(row)) {
+          return parseInt(row, 10);
+        }
+        return null;
+      })
+      .filter((row): row is Row => row !== null);
+  }
+
 
   public async _newChild(parent: Row, index = -1): Promise<AttachedChildInfo> {
     const row = await this.store.getNew();
@@ -265,23 +282,34 @@ export default class Document extends EventEmitter {
       this.applyHookAsync('pluginRowContents', {}, { row }), // Ensure this resolves to any
     ]);
 
+    const safeChildren = this.normalizeRows(children);
+    const safeParents = this.normalizeRows(parents);
     const info: RowInfo = {
       line, 
       collapsed, // Ensure this is a boolean
-      parentRows: parents,
-      childRows: children,
+      parentRows: safeParents,
+      childRows: safeChildren,
       pluginData,
     };
     return this.cache.loadRow(row, info);
   }
 
-  public async forceLoadTree(row = this.root.row, ignoreCollapsed = false) {
+  public async forceLoadTree(
+    row = this.root.row,
+    ignoreCollapsed = false,
+    visitedRows: {[row: number]: boolean} = {}
+  ) {
+    if (visitedRows[row]) {
+      // Cycle or duplicate detected - skip to prevent infinite recursion
+      return;
+    }
+    visitedRows[row] = true;
     const cachedRow = await this.getInfo(row);
 
     if (ignoreCollapsed || !cachedRow.collapsed) {
       await Promise.all(
         cachedRow.childRows.map(
-          async (childRow) => await this.forceLoadTree(childRow)
+          async (childRow) => await this.forceLoadTree(childRow, ignoreCollapsed, visitedRows)
         )
       );
     }

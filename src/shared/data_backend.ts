@@ -22,6 +22,10 @@ export default class DataBackend {
       await this.set(entry.key, entry.value);
     }
   }
+
+  public async flush(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 export class SynchronousDataBackend {

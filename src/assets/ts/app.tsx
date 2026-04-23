@@ -31,7 +31,7 @@ import { ClientStore, DocumentStore } from './datastore';
 import { SynchronousInMemory, InMemory } from '../../shared/data_backend';
 import {
   BackendType, SynchronousLocalStorageBackend,
-  FirebaseBackend, ClientSocketBackend, IndexedDBBackend
+  FirebaseBackend, IndexedDBBackend, ManualSaveBackend, AuthenticatedServerBackend
 } from './data_backend';
 import Document from './document';
 import { PluginsManager } from './plugins';
@@ -49,6 +49,7 @@ import '../../plugins';
 import KeyBindings from './keyBindings';
 
 import AppComponent, { TextMessage } from './components/app';
+import DocumentListComponent from './components/documentList';
 
 declare const window: any; // because we attach globals for debugging
 
@@ -78,12 +79,16 @@ ReactDOM.render(
 
 $(document).ready(async () => {
   let docname: string = browser_utils.getParameterByName('doc') || '';
+  let storageDocname: string = docname;
+  let forceServerDataMode: boolean = false;
+  let authToken: string | null = null;
   if (docname !== '') { document.title = `${docname} - Vimflowy`; }
 
   // random global state.  these things should be managed by redux maybe
   let caughtErr: null | Error = null;
   let userMessage: null | TextMessage = null;
   let saveMessage: null | TextMessage = null;
+  let hasUnsavedChanges: boolean = false;
 
   window.onerror = function(msg: string, url: string, line: number, _col: number, err: Error) {
     logger.error(`Caught error: '${msg}' from  ${url}:${line}`);
@@ -101,50 +106,12 @@ $(document).ready(async () => {
   let clientStore: ClientStore;
   let docStore: DocumentStore;
   let backend_type: BackendType;
-  let doc;
-
-  // TODO: consider using modernizr for feature detection
-  // probably also want to check flexbox support
-  if (noLocalStorage) {
-    alert('You need local storage support for data to be persisted!');
-    clientStore = new ClientStore(new SynchronousInMemory());
-    backend_type = 'inmemory';
-  } else {
-    clientStore = new ClientStore(new SynchronousLocalStorageBackend(), docname);
-    if (SERVER_CONFIG.socketserver) {
-      backend_type = 'socketserver';
-    } else {
-      backend_type = clientStore.getDocSetting('dataSource');
-    }
-  }
-
-  const config: Config = vimConfig;
-
-  function getLocalStore(): DocumentStore {
-     return new DocumentStore(new IndexedDBBackend(docname), docname);
-  }
-
-  async function getFirebaseStore(): Promise<DocumentStore> {
-    const firebaseId = clientStore.getDocSetting('firebaseId');
-    const firebaseApiKey = clientStore.getDocSetting('firebaseApiKey');
-    const firebaseUserEmail = clientStore.getDocSetting('firebaseUserEmail');
-    const firebaseUserPassword = clientStore.getDocSetting('firebaseUserPassword');
-
-    if (!firebaseId) {
-      throw new Error('No firebase ID found');
-    }
-    if (!firebaseApiKey) {
-      throw new Error('No firebase API key found');
-    }
-    const fb_backend = new FirebaseBackend(docname, firebaseId, firebaseApiKey);
-    const dStore = new DocumentStore(fb_backend, docname);
-    await fb_backend.init(firebaseUserEmail || '', firebaseUserPassword || '');
-
-    logger.info(`Successfully initialized firebase connection: ${firebaseId}`);
-    return dStore;
-  }
+  let doc: Document;
 
   async function getUserInfo(): Promise<{id: string, email: string, name: string} | null> {
+    if (typeof localStorage === 'undefined' || localStorage === null) {
+      return null;
+    }
     const token = localStorage.getItem('vimflowy_auth_token');
     if (!token) {
       return null;
@@ -172,48 +139,129 @@ $(document).ready(async () => {
     }
   }
 
-  async function getSocketServerStore(): Promise<DocumentStore> {
-    let socketServerHost;
-    let userId;
-    
-    if (SERVER_CONFIG.socketserver) { // server is fixed!
-      socketServerHost = window.location.origin.replace(/^http/, 'ws');
-      
-      // Get user info from authentication
-      const userInfo = await getUserInfo();
-      if (!userInfo) {
-        window.location.href = '/login.html';
-        throw new Error('Not authenticated');
+  if (SERVER_CONFIG.socketserver) {
+    const userInfo = await getUserInfo();
+    if (!userInfo || !userInfo.id) {
+      localStorage.removeItem('vimflowy_auth_token');
+      window.location.href = '/login.html';
+      return;
+    }
+    authToken = localStorage.getItem('vimflowy_auth_token');
+    forceServerDataMode = true;
+    // Scope local storage keys by authenticated user to avoid cross-user leakage.
+    storageDocname = `user:${userInfo.id}:${docname}`;
+
+    // Show document listing if no doc parameter
+    if (!docname && authToken) {
+      docname = await showDocumentListing(authToken);
+      storageDocname = `user:${userInfo.id}:${docname}`;
+    }
+  }
+
+  async function showDocumentListing(token: string): Promise<string> {
+    let documents: string[] = [];
+    try {
+      const res = await fetch('/api/documents', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const payload = await res.json();
+        documents = (payload.documents || []).filter((d: string) => d !== '');
       }
-      userId = userInfo.id;
-    } else {
-      socketServerHost = clientStore.getDocSetting('socketServerHost');
-      userId = clientStore.getDocSetting('socketServerUserId');
+    } catch (e) {
+      logger.error('Failed to fetch document list:', e);
     }
 
-    if (!socketServerHost) {
-      throw new Error('No socket server host found');
+    return new Promise<string>((resolve) => {
+      ReactDOM.render(
+        <DocumentListComponent
+          documents={documents}
+          onSelect={(name) => {
+            resolve(name);
+          }}
+          onCreate={(name) => {
+            resolve(name);
+          }}
+        />,
+        appEl
+      );
+    });
+  }
+
+  // TODO: consider using modernizr for feature detection
+  // probably also want to check flexbox support
+  if (noLocalStorage) {
+    alert('You need local storage support for data to be persisted!');
+    clientStore = new ClientStore(new SynchronousInMemory());
+    backend_type = 'inmemory';
+  } else {
+    clientStore = new ClientStore(new SynchronousLocalStorageBackend(), storageDocname);
+    if (SERVER_CONFIG.socketserver) {
+      backend_type = 'local';
+    } else {
+      backend_type = clientStore.getDocSetting('dataSource');
+      if (backend_type === 'socketserver') {
+        backend_type = 'local';
+      }
     }
-    if (!userId) {
-      throw new Error('No user ID found');
+  }
+
+  const config: Config = vimConfig;
+
+  function getLocalStore(): DocumentStore {
+     return new DocumentStore(
+       new ManualSaveBackend(new IndexedDBBackend(storageDocname)),
+       storageDocname
+     );
+  }
+
+  function getServerStore(): DocumentStore {
+    if (!authToken) {
+      throw new Error('Missing auth token');
     }
-    
-    const socket_backend = new ClientSocketBackend();
-    // NOTE: we don't pass docname to DocumentStore since we want keys
-    // to not have prefixes
-    const dStore = new DocumentStore(socket_backend);
-    try {
-      const token = localStorage.getItem('vimflowy_auth_token') || '';
-      await socket_backend.init(socketServerHost, userId, token);
-    } catch (e:any) {
-      throw e;
+    return new DocumentStore(
+      new ManualSaveBackend(new AuthenticatedServerBackend(authToken)),
+      docname
+    );
+  }
+
+  async function getFirebaseStore(): Promise<DocumentStore> {
+    const firebaseId = clientStore.getDocSetting('firebaseId');
+    const firebaseApiKey = clientStore.getDocSetting('firebaseApiKey');
+    const firebaseUserEmail = clientStore.getDocSetting('firebaseUserEmail');
+    const firebaseUserPassword = clientStore.getDocSetting('firebaseUserPassword');
+
+    if (!firebaseId) {
+      throw new Error('No firebase ID found');
     }
-    
-    logger.info(`Successfully initialized socket connection: ${socketServerHost}`);
+    if (!firebaseApiKey) {
+      throw new Error('No firebase API key found');
+    }
+    const fb_backend = new FirebaseBackend(docname, firebaseId, firebaseApiKey);
+    const dStore = new DocumentStore(fb_backend, docname);
+    await fb_backend.init(firebaseUserEmail || '', firebaseUserPassword || '');
+
+    logger.info(`Successfully initialized firebase connection: ${firebaseId}`);
     return dStore;
   }
 
-  if (backend_type === 'firebase') {
+  if (forceServerDataMode) {
+    try {
+      docStore = getServerStore();
+      backend_type = 'local';
+    } catch (e:any) {
+      alert(`
+        Error initializing authenticated server datastore:
+
+        ${e.message}
+
+        Please sign in again.
+      `);
+      localStorage.removeItem('vimflowy_auth_token');
+      window.location.href = '/login.html';
+      return;
+    }
+  } else if (backend_type === 'firebase') {
     try {
       docStore = await getFirebaseStore();
     } catch (e:any) {
@@ -232,24 +280,6 @@ $(document).ready(async () => {
     }
   } else if (backend_type === 'inmemory') {
     docStore = new DocumentStore(new InMemory());
-  } else if (backend_type === 'socketserver') {
-    try {
-      docStore = await getSocketServerStore();
-    } catch (e:any) {
-      alert(`
-        Error loading socket server datastore:
-
-        ${e.message}
-
-        ${e.stack}
-
-        Falling back to localStorage default.
-      `);
-
-      clientStore.setDocSetting('socketServerPassword', '');
-      docStore = getLocalStore();
-      backend_type = 'local';
-    }
   } else {
     docStore = getLocalStore();
     backend_type = 'local';
@@ -265,13 +295,30 @@ $(document).ready(async () => {
   let showingKeyBindings = clientStore.getClientSetting('showKeyBindings');
 
   doc.store.events.on('saved', () => {
+    hasUnsavedChanges = false;
     saveMessage = { message: 'Saved!', text_class: 'text-success' };
     renderMain(); // fire and forget
   });
   doc.store.events.on('unsaved', () => {
-    saveMessage = { message: 'Saving....', text_class: 'text-error' };
+    hasUnsavedChanges = true;
+    saveMessage = { message: 'Unsaved changes', text_class: 'text-error' };
     renderMain(); // fire and forget
   });
+
+  async function flushDocumentSaves() {
+    saveMessage = { message: 'Saving....', text_class: 'text-error' };
+    await renderMain();
+    try {
+      await doc.store.flush();
+      hasUnsavedChanges = false;
+      saveMessage = { message: 'Saved!', text_class: 'text-success' };
+    } catch (e:any) {
+      logger.error('Manual save failed:', e);
+      saveMessage = { message: 'Save failed', text_class: 'text-error' };
+      session.showMessage(`Save failed: ${e.message || e}`, { text_class: 'error' });
+    }
+    await renderMain();
+  }
 
   // hotkeys and key bindings
   const saved_mappings = clientStore.getClientSetting('hotkeys');
@@ -395,6 +442,9 @@ $(document).ready(async () => {
           error={caughtErr}
           message={userMessage}
           saveMessage={saveMessage}
+          onSave={() => {
+            flushDocumentSaves(); // fire and forget
+          }}
           config={config}
           session={session}
           pluginManager={pluginManager}
@@ -473,6 +523,21 @@ $(document).ready(async () => {
   });
 
   keyEmitter.listen();
+  const saveHotkeyListener = (e: KeyboardEvent) => {
+    const key = e.key && e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && key === 's') {
+      e.preventDefault();
+      flushDocumentSaves(); // fire and forget
+    }
+  };
+  window.addEventListener('keydown', saveHotkeyListener);
+  window.addEventListener('beforeunload', (e: BeforeUnloadEvent) => {
+    if (!hasUnsavedChanges) {
+      return;
+    }
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes. Save before leaving?';
+  });
   keyEmitter.on('keydown', (key) => {
     keyHandler.queueKey(key);
     // NOTE: this is just a best guess... e.g. the mode could be wrong
@@ -530,6 +595,7 @@ $(document).ready(async () => {
   });
 
   $(window).on('unload', () => {
+    window.removeEventListener('keydown', saveHotkeyListener);
     session.exit(); // fire and forget
   });
 

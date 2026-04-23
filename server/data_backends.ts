@@ -109,4 +109,16 @@ export class DirectusBackend extends DataBackend {
     await this.request('/server/ping');
     logger.info('Connected to Directus backend.');
   }
+
+  public async listDocumentNames(): Promise<string[]> {
+    const query = `/items/${this.collection}` +
+      `?filter[user_id][_eq]=${encodeFilterParam(this.userId)}` +
+      `&filter[key][_ends_with]=save%3AlastID` +
+      `&fields[]=key&limit=1000`;
+    const response = await this.request<DirectusResponse<Array<{key: string}>>>(query);
+    return (response.data || []).map(row => {
+      // key is like `${docname}save:lastID` → strip suffix
+      return row.key.replace(/save:lastID$/, '');
+    });
+  }
 }
